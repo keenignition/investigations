@@ -2,3 +2,5 @@
 .pytest_cache/
 
 *.ncu-rep
+out/
+llm.c/
