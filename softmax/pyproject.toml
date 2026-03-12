@@ -1,0 +1,22 @@
+[project]
+name = "softmax"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib>=3.10.8",
+    "ninja>=1.13.0",
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
+    "torch>=2.10.0",
+    "triton>=3.6.0",
+]
+
+# Only build the C++ extension; do not treat csrc/images/other dirs as Python packages
+[tool.setuptools.packages.find]
+include = []
+
+[build-system]
+requires = ["setuptools", "wheel", "numpy>=2.4.3", "torch>=2.10.0"]
+build-backend = "setuptools.build_meta"

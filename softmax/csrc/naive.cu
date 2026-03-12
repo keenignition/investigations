@@ -2,8 +2,9 @@
 #include <math.h>
 #include <cuda_runtime.h>
 #include <curand.h>
+#include <torch/extension.h>
 
-__global__ void softmax(const float* in, float* out, int M, int N) {
+__global__ void softmax_kernel(const float* in, float* out, int M, int N) {
   extern __shared__ float smem[];
   int row = blockIdx.x;
   int tid = threadIdx.x;
@@ -65,9 +66,8 @@ __global__ void softmax(const float* in, float* out, int M, int N) {
   }
   float rowSum = smem[0];
 
-  // iterate over col
-    // out /= row sum
-  for (int i = 0; i < N; i+= blockDim.x) {
+  // iterate over col — each thread divides its elements by row sum
+  for (int i = tid; i < N; i += blockDim.x) {
     out[row * N + i] /= rowSum;
   }
 }
@@ -105,7 +105,7 @@ int main() {
 
   // warmup
   for(int i = 0; i < 5; i++) {
-    softmax<<<blocks, threads, smem>>>(in, out, M, N);
+    softmax_kernel<<<blocks, threads, smem>>>(in, out, M, N);
   }
   cudaDeviceSynchronize();
 
@@ -116,7 +116,7 @@ int main() {
 
   cudaEventRecord(start);
 
-  softmax<<<blocks, threads, smem>>>(in, out, M, N);
+  softmax_kernel<<<blocks, threads, smem>>>(in, out, M, N);
 
   cudaEventRecord(stop);
   cudaEventSynchronize(stop);
@@ -133,5 +133,28 @@ int main() {
   return 0;
 }
 
-// nvcc -O3 -g -G -lcurand naive.cu -o naive
+
+// Standalone: nvcc -O3 -g -G -lcurand naive.cu -o naive
 // ncu --kernel-name softmax --launch-skip 5 --launch-count 1 --set full -o naive.ncu-rep ./naive
+
+// -----------------
+
+
+void launch_softmax_naive(const float* in, float* out, int M, int N) {
+  const int threads = 256;
+  size_t smem = threads * sizeof(float);
+  softmax_kernel<<<M, threads, smem>>>(in, out, M, N);
+}
+
+torch::Tensor softmax_naive(torch::Tensor x) {
+  TORCH_CHECK(x.is_cuda(), "x must be a CUDA tensor");
+  TORCH_CHECK(x.dtype() == torch::kFloat32, "x must be float32");
+  TORCH_CHECK(x.dim() == 2, "x must be 2D (M, N)");
+
+  auto out = torch::empty_like(x);
+  int M = x.size(0);
+  int N = x.size(1);
+
+  launch_softmax_naive(x.data_ptr<float>(), out.data_ptr<float>(), M, N);
+  return out;
+}
