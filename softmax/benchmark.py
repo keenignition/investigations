@@ -4,15 +4,18 @@ from typing import Callable
 import triton
 import matplotlib.pyplot as plt
 
+from triton_kernels.fused import fused_softmax
+
 configs = [
     triton.testing.Benchmark(
         x_names=["N"],
         x_vals=[2**i for i in range(10, 21)],
         line_arg="provider",
-        line_vals=["torch", "softmax_naive"],
+        line_vals=["torch", "softmax_naive", "fused"],
         line_names=[
             "Torch",
             "Softmax naive kernel (one block per row)",
+            "Fused Softmax (triton)"
         ],
         ylabel="TFLOPS",
         plot_name="softmax-performance",
@@ -36,6 +39,8 @@ def benchmark(N: int, provider: str, quantiles: list[float] = [0.5, 0.2, 0.8]):
             return lambda: torch.softmax(x, dim=-1)
         elif provider == "softmax_naive":
             return lambda: softmax_kernel.softmax_naive(x)
+        elif provider == "fused":
+            return lambda: fused_softmax(x)
         else:
             raise KeyError(f"Unknown provider {provider!r}.")
 
