@@ -8,7 +8,9 @@ ext_modules = [
         name='softmax_kernel',
         sources=[
             'csrc/binding.cpp',
+            'csrc/torchBind.cu',
             'csrc/naive.cu',
+            'csrc/wr.cu',
         ],
         extra_compile_args={
             'cxx': [

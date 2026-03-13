@@ -11,11 +11,12 @@ configs = [
         x_names=["N"],
         x_vals=[2**i for i in range(10, 21)],
         line_arg="provider",
-        line_vals=["torch", "softmax_naive", "fused"],
+        line_vals=["torch", "softmax_naive", "fused", "softmax_wr"],
         line_names=[
             "Torch",
-            "Softmax naive kernel (one block per row)",
-            "Fused Softmax (triton)"
+            "Softmax naive kernel",
+            "Fused Softmax (triton)",
+            "Softmax warp reduction"
         ],
         ylabel="TFLOPS",
         plot_name="softmax-performance",
@@ -32,7 +33,7 @@ def _gbps(x: torch.Tensor, *times_ms: float) -> tuple[float, ...]:
 
 @triton.testing.perf_report(configs)
 def benchmark(N: int, provider: str, quantiles: list[float] = [0.5, 0.2, 0.8]):
-    x = torch.randn((128, N), device="cuda")
+    x = torch.randn((4096, N), device="cuda")
 
     def run_provider() -> Callable:
         if provider == "torch":
@@ -41,11 +42,15 @@ def benchmark(N: int, provider: str, quantiles: list[float] = [0.5, 0.2, 0.8]):
             return lambda: softmax_kernel.softmax_naive(x)
         elif provider == "fused":
             return lambda: fused_softmax(x)
+        elif provider == "softmax_wr":
+            return lambda: softmax_kernel.softmax_wr(x)
         else:
             raise KeyError(f"Unknown provider {provider!r}.")
 
     try:
-        ms, min_ms, max_ms = triton.testing.do_bench(run_provider(), quantiles=quantiles)
+        ms, min_ms, max_ms = triton.testing.do_bench(
+            run_provider(), quantiles=quantiles
+        )
         return _gbps(x, ms, max_ms, min_ms)
     except (triton.CompilationError, ValueError):
         return 0.0, 0.0, 0.0
