@@ -40,3 +40,23 @@ torch::Tensor softmax_wr(torch::Tensor x) {
 }
 
 // ---
+
+static void launch_softmax_fused_binding(const float* in, float* out, int M, int N) {
+  TORCH_CHECK(N >= 1024 && N <= 65536 && (N & (N - 1)) == 0,
+              "softmax_fused requires N a power of 2 in [1024, 65536], got N=", N);
+  launch_softmax_fused(in, out, M, N);
+}
+
+torch::Tensor softmax_fused(torch::Tensor x) {
+  TORCH_CHECK(x.is_cuda(), "x must be a CUDA tensor");
+  TORCH_CHECK(x.dtype() == torch::kFloat32, "x must be float32");
+  TORCH_CHECK(x.dim() == 2, "x must be 2D (M, N)");
+
+  auto out = torch::empty_like(x);
+  const int M = x.size(0);
+  const int N = x.size(1);
+  launch_softmax_fused_binding(x.data_ptr<float>(), out.data_ptr<float>(), M, N);
+  return out;
+}
+
+// ---

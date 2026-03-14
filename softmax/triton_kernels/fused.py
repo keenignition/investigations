@@ -54,8 +54,15 @@ target = triton.runtime.driver.active.get_current_target()
 kernels = {}
 
 
+# Max elements per block (shared memory / register limit). Beyond this the "full row in one block" design fails.
+MAX_BLOCK_COLS = 16384
+
+
 def fused_softmax(x):
     n_rows, n_cols = x.shape
+
+    if n_cols > MAX_BLOCK_COLS:
+        return torch.softmax(x, dim=-1)
 
     # The block size of each loop iteration is the smallest power of two greater than the number of columns in `x`
     BLOCK_SIZE = triton.next_power_of_2(n_cols)

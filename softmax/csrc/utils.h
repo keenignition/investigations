@@ -30,6 +30,13 @@ extern __global__ void softmax_kernel(const float* __restrict__ in,
 extern __global__ void softmax_kernel_wr(const float* __restrict__ in,
                                          float* __restrict__ out,
                                          int M, int N);
+
+template <int N>
+extern __global__ void softmax_fused_kernel(const float* __restrict__ in,
+                                           float* __restrict__ out,
+                                           int M);
+
+void launch_softmax_fused(const float* in, float* out, int M, int N);
 #endif
 
 /* --------------------------------------------------------------------------- */

@@ -11,6 +11,7 @@ ext_modules = [
             'csrc/torchBind.cu',
             'csrc/naive.cu',
             'csrc/wr.cu',
+            'csrc/fused.cu',
         ],
         extra_compile_args={
             'cxx': [
