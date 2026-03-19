@@ -1,3 +1,4 @@
+# source from https://triton-lang.org/main/getting-started/tutorials/02-fused-softmax.html
 import torch
 
 import triton

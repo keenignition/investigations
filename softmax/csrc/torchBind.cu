@@ -41,11 +41,24 @@ torch::Tensor softmax_wr(torch::Tensor x) {
 
 // ---
 
+// Register-based fused kernel is only fast for N <= 4096 (avoids register spill).
+// For larger N we use the block-reduction kernel (shared-mem or no-cache) for better performance.
+constexpr int FUSED_MAX_N_REGISTER_KERNEL = 4096;
+
 static void launch_softmax_fused_binding(const float* in, float* out, int M, int N) {
-  TORCH_CHECK(N >= 1024 && N <= 65536 && (N & (N - 1)) == 0,
-              "softmax_fused requires N a power of 2 in [1024, 65536], got N=", N);
+  TORCH_CHECK(N >= 1024 && (N & (N - 1)) == 0,
+              "softmax_fused requires N a power of 2 >= 1024, got N=", N);
+  // if (N > FUSED_MAX_N_REGISTER_KERNEL) {
+  //   launch_softmax_block(in, out, M, N);
+  // } else {
+  //   launch_softmax_fused(in, out, M, N);
+  // }
   launch_softmax_fused(in, out, M, N);
 }
+
+// static void launch_softmax_block_binding(const float* in, float* out, int M, int N) {
+//   launch_softmax_block(in, out, M, N);
+// }
 
 torch::Tensor softmax_fused(torch::Tensor x) {
   TORCH_CHECK(x.is_cuda(), "x must be a CUDA tensor");

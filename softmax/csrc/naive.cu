@@ -1,7 +1,8 @@
-#include <math.h>
 #include "utils.h"
+#include <math.h>
 
-__global__ void softmax_kernel(const float* __restrict__ in, float* __restrict__ out, int M, int N) {
+__global__ void softmax_kernel(const float *__restrict__ in,
+                               float *__restrict__ out, int M, int N) {
   extern __shared__ float smem[];
   int row = blockIdx.x;
   int tid = threadIdx.x;
@@ -10,12 +11,12 @@ __global__ void softmax_kernel(const float* __restrict__ in, float* __restrict__
     // --- get max of each row
 
     // iterate columns using the threads
-    // so 256 threads will hold the max per thread 
+    // so 256 threads will hold the max per thread
     // stride of 25, ie., 1024/256 = 4 values
     // each thread will iterate over 4 values and capture the max among them
     float localMax = -INFINITY;
-    for (int i = tid; i < N; i+=blockDim.x) {
-      float v = in[row*N + i];
+    for (int i = tid; i < N; i += blockDim.x) {
+      float v = in[row * N + i];
       localMax = fmaxf(localMax, v);
     }
 
@@ -27,7 +28,7 @@ __global__ void softmax_kernel(const float* __restrict__ in, float* __restrict__
     // width wise half folds to get the max
     // i >>= 1 --- bitshift divide by 2 ---> i = i/ 2
     for (int i = blockDim.x / 2; i > 0; i >>= 1) {
-      if(tid < i) {
+      if (tid < i) {
         smem[tid] = fmaxf(smem[tid], smem[tid + i]);
       }
       __syncthreads(); // wait as every mem needs to be written for true max
@@ -39,12 +40,11 @@ __global__ void softmax_kernel(const float* __restrict__ in, float* __restrict__
     // --- normalize and compute numerator and denominator
 
     // iterate over col, 256 threads
-      // get exp(i - max)
-      // store num in out tensor
-      // accumulate sum of num
+    // get exp(i - max)
+    // store num in out tensor
+    // accumulate sum of num
     float localSum = 0.0f;
-    for (int i = tid; i < N; i += blockDim.x)
-    {
+    for (int i = tid; i < N; i += blockDim.x) {
       float v = in[row * N + i];
       float e = expf(v - rowMax);
       out[row * N + i] = e;
@@ -56,8 +56,8 @@ __global__ void softmax_kernel(const float* __restrict__ in, float* __restrict__
     __syncthreads();
 
     // add 256 smems per row to get final row sum
-    for (int i = blockDim.x / 2; i>0; i>>=1) {
-      if(tid < i) {
+    for (int i = blockDim.x / 2; i > 0; i >>= 1) {
+      if (tid < i) {
         smem[tid] += smem[tid + i];
       }
       __syncthreads();
@@ -104,4 +104,5 @@ int main() {
 #endif /* SOFTMAX_STANDALONE */
 
 // Standalone: nvcc -O3 -DSOFTMAX_STANDALONE -lcurand naive.cu -o naive
-// ncu --kernel-name softmax --launch-skip 5 --launch-count 1 --set full -o naive.ncu-rep ./naive
+// ncu --kernel-name softmax --launch-skip 5 --launch-count 1 --set full -o
+// naive.ncu-rep ./naive

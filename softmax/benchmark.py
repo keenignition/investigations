@@ -1,8 +1,9 @@
-import torch
-import softmax_kernel
 from typing import Callable
-import triton
+
 import matplotlib.pyplot as plt
+import softmax_kernel
+import torch
+import triton
 
 from triton_kernels.fused import fused_softmax
 

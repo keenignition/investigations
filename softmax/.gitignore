@@ -12,6 +12,10 @@ build/
 .vscode/
 profiling/
 build/
+docs/
 
 *.so
 *.png
+
+.clangd
+.zed/

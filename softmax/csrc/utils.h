@@ -37,6 +37,7 @@ extern __global__ void softmax_fused_kernel(const float* __restrict__ in,
                                            int M);
 
 void launch_softmax_fused(const float* in, float* out, int M, int N);
+
 #endif
 
 /* --------------------------------------------------------------------------- */
