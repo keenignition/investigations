@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import sys
 
+import torch  # must load before softmax_kernel so libc10 etc. are resolved
 import softmax_kernel
-import torch
 
 from triton_kernels.fused import fused_softmax
 

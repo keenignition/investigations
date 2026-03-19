@@ -1,8 +1,8 @@
 from typing import Callable
 
 import matplotlib.pyplot as plt
+import torch  # must load before softmax_kernel so libc10 etc. are resolved
 import softmax_kernel
-import torch
 import triton
 
 from triton_kernels.fused import fused_softmax

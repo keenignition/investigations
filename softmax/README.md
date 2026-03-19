@@ -5,33 +5,34 @@ This project needs CUDA/nvcc 12.8.
 ## Setup
 
 1. Copy `.env.example` to `.env` and set `CUDA_ARCH` for your GPU (e.g. `sm_89`).
-2. Install Python deps (creates/uses a venv with PyTorch, ninja, etc.):
-
-   ```bash
-   uv sync
-   # or: python -m venv .venv && source .venv/bin/activate && pip install -e .
-   ```
-
-3. Benchmark:
+2. Run the benchmark script (creates `.venv`, `uv sync`, then fast editable install + `benchmark.py`):
 
    ```bash
    source .env   # or: export $(grep -v '^#' .env | xargs)
    ./scripts/benchmark.sh
    ```
 
+   The script uses `uv pip install -e . --no-build-isolation` so the CUDA extension builds against the venv’s PyTorch instead of a fresh isolated multi‑GB torch install.
+
+**Manual install** (if not using `benchmark.sh`):
+
+   ```bash
+   uv sync
+   source .venv/bin/activate
+   uv pip install -e . --no-build-isolation
+   ```
+
 ### Why `pip install -e .` can take ~10 minutes (especially on a remote box)
 
 `pip` uses **PEP 517 build isolation** by default. Your `[build-system] requires` includes **`torch`**, so each install may create a **fresh build environment** and **download/extract a full PyTorch wheel** (gigabytes) *before* nvcc touches your tiny `.cu` files. Kernel size does not matter much; that step dominates.
 
-**Fast iterative workflow** (use the venv’s torch instead of reinstalling it for every build):
+**Fast iterative workflow** (use the venv’s torch instead of reinstalling it for every build): same as `./scripts/benchmark.sh` after `uv sync`, or:
 
 ```bash
 uv sync   # once: pulls torch + ninja into .venv
 uv pip install -e . --no-build-isolation
 # or:  pip install -e . --no-build-isolation
 ```
-
-Or run `./scripts/install_editable.sh` (same as above).
 
 To see where time goes: `pip install -e . -v` (watch for “Installing build dependencies” / torch).
 
