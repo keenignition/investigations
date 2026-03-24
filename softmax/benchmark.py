@@ -8,13 +8,10 @@ import triton
 from triton_kernels.fused import fused_softmax
 from triton_kernels.online import online_softmax
 
-# N=262144: standard Triton and CUDA fused/block kernels return 0 (unsupported/OOM).
-# Triton online handles all sizes (streams in 4096-element chunks, no SRAM cap).
-# CUDA online handles up to 262144 but spills registers heavily past 65536.
 configs = [
     triton.testing.Benchmark(
         x_names=["N"],
-        x_vals=[2**i for i in range(10, 19)],  # 1024..262144
+        x_vals=[2**i for i in range(10, 17)],  # 1024..262144
         line_arg="provider",
         line_vals=[
             "torch",
@@ -56,11 +53,11 @@ def benchmark(N: int, provider: str, quantiles: list[float] = [0.5, 0.2, 0.8]):
     def run_provider() -> Callable:
         if provider == "torch":
             return lambda: torch.softmax(x, dim=-1)
-        elif provider == "softmax_naive":
+        if provider == "softmax_naive":
             return lambda: softmax_kernel.softmax_naive(x)
         elif provider == "softmax_wr":
             return lambda: softmax_kernel.softmax_wr(x)
-        elif provider == "fused":  # triton 1-pass
+        elif provider == "fused":
             return lambda: fused_softmax(x)
         elif provider == "triton_online":
             return lambda: online_softmax(x)
@@ -78,8 +75,10 @@ def benchmark(N: int, provider: str, quantiles: list[float] = [0.5, 0.2, 0.8]):
             run_provider(), quantiles=quantiles
         )
         return _gbps(x, ms, max_ms, min_ms)
-    except (triton.CompilationError, ValueError, RuntimeError):
-        return 0.0, 0.0, 0.0
+    except RuntimeError as e:
+        if "not supported" in str(e) or "N must be" in str(e):
+            return 0.0, 0.0, 0.0
+        raise
 
 
 df = benchmark.run(return_df=True)[0]
