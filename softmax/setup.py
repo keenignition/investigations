@@ -44,7 +44,6 @@ ext_modules = [
                 "-lineinfo",
                 "-Xptxas=-v",
                 "-lcurand",
-                "-dlcm=ca",
                 "-maxrregcount=128",
                 f"-arch={CUDA_ARCH}",
             ],
