@@ -11,7 +11,7 @@ from triton_kernels.online import online_softmax
 configs = [
     triton.testing.Benchmark(
         x_names=["N"],
-        x_vals=[2**i for i in range(10, 17)],  # 1024..262144
+        x_vals=[2**i for i in range(10, 19)],  # 1024..262144
         line_arg="provider",
         line_vals=[
             "torch",
