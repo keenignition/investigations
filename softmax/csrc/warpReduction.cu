@@ -103,6 +103,12 @@ __global__ void softmax_kernel_wr(const float *__restrict__ in,
   }
 }
 
+void launch_softmax_wr(const float *in, float *out, int M, int N) {
+  const int threads = 256;
+  const size_t smem = (threads / 32) * sizeof(float);
+  softmax_kernel_wr<<<M, threads, smem>>>(in, out, M, N);
+}
+
 #ifdef SOFTMAX_STANDALONE
 
 int main() {

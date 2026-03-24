@@ -26,6 +26,8 @@ ext_modules = [
             "csrc/naive.cu",
             "csrc/warpReduction.cu",
             "csrc/fused.cu",
+            "csrc/fusedBlock.cu",
+            "csrc/online.cu",
         ],
         extra_compile_args={
             "cxx": [
@@ -42,6 +44,7 @@ ext_modules = [
                 "-lineinfo",
                 "-Xptxas=-v",
                 "-lcurand",
+                "-dlcm=ca",
                 "-maxrregcount=128",
                 f"-arch={CUDA_ARCH}",
             ],
