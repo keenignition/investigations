@@ -85,9 +85,6 @@ __global__ __launch_bounds__(BS) void softmax_online_kernel(
 #pragma unroll
   for (int i = 0; i < NP; i++) {
     buf[i] = row_in[tid + i * BS];
-    // Online softmax: update (max, sum) for each of the 4 elements.
-    // When max increases, the old partial sum is rescaled by
-    // exp(old_max - new_max).
     float vals[4] = {buf[i].x, buf[i].y, buf[i].z, buf[i].w};
 #pragma unroll
     for (int j = 0; j < 4; j++) {
@@ -163,7 +160,6 @@ __global__ __launch_bounds__(BS) void softmax_online_2pass_kernel(
   }
 }
 
-// Supported sizes defined by ONLINE_SIZES in utils.h.
 // NP = N / (BS * 4) — computed by the macro so the kernel template is correct.
 // Routes to 2-pass for NP >= ONLINE_2PASS_MIN_NP to avoid register spilling.
 void launch_softmax_online(const float *d_in, float *d_out, int M, int N) {

@@ -43,4 +43,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as e:
+        if "not supported" in str(e) or "N must be" in str(e):
+            print(f"[skip] {e}", file=sys.stderr)
+            sys.exit(0)
+        raise

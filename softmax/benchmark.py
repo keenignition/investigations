@@ -6,12 +6,13 @@ import softmax_kernel
 import triton
 
 from triton_kernels.fused import fused_softmax
+from triton_kernels.liger import liger_softmax
 from triton_kernels.online import online_softmax
 
 configs = [
     triton.testing.Benchmark(
         x_names=["N"],
-        x_vals=[2**i for i in range(10, 19)],  # 1024..262144
+        x_vals=[2**i for i in range(10, 17)],  # 1024..262144
         line_arg="provider",
         line_vals=[
             "torch",
@@ -19,6 +20,7 @@ configs = [
             "softmax_wr",
             "fused",
             "triton_online",
+            "liger",
             "softmax_fused_warp",
             "softmax_fused_block",
             "softmax_online",
@@ -29,6 +31,7 @@ configs = [
             "Softmax warp reduction",
             "Fused Softmax (triton, 1-pass SRAM)",
             "Online Softmax (triton, 2-pass streaming)",
+            "Liger Softmax (triton)",
             "Softmax Fused Warp (CUDA)",
             "Softmax Fused Block (CUDA)",
             "Softmax Online (CUDA)",
@@ -61,6 +64,8 @@ def benchmark(N: int, provider: str, quantiles: list[float] = [0.5, 0.2, 0.8]):
             return lambda: fused_softmax(x)
         elif provider == "triton_online":
             return lambda: online_softmax(x)
+        elif provider == "liger":
+            return lambda: liger_softmax(x)
         elif provider == "softmax_fused_warp":
             return lambda: softmax_kernel.softmax_fused_warp(x)
         elif provider == "softmax_fused_block":

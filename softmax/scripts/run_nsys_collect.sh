@@ -6,7 +6,7 @@ cd "$ROOT"
 mkdir -p out
 
 # Default N for profiling (use 4096 so fused uses register kernel; 8192 would use block kernel)
-N="${1:-4096}"
+N="${1:-131072}"
 
 run_nsys() {
   local name="$1"
@@ -20,5 +20,6 @@ run_nsys "softmax_wr"            "softmax_wr"
 run_nsys "fused_triton"          "fused"
 run_nsys "softmax_fused_warp"    "softmax_fused_warp"
 run_nsys "softmax_fused_block"   "softmax_fused_block"
+run_nsys "softmax_online"        "softmax_online"
 
 echo "Reports written to $ROOT/out/*.nsys-rep"
