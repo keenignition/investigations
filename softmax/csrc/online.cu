@@ -114,14 +114,67 @@ __global__ __launch_bounds__(BS) void softmax_online_kernel(
   }
 }
 
+#define ONLINE_2PASS_MIN_NP 16 
+
+template <int NP, int BS>
+__global__ __launch_bounds__(BS) void softmax_online_2pass_kernel(
+    const float *__restrict__ in, float *__restrict__ out, int M) {
+  constexpr int N       = NP * BS * 4;
+  constexpr int n_warps = BS / WARP_SIZE;
+
+  extern __shared__ float smem[];
+  float *smem_max = smem;
+  float *smem_sum = smem + n_warps;
+
+  const int tid = threadIdx.x;
+  const int row = blockIdx.x;
+  if (row >= M) return;
+
+  const float4 *row_in  = reinterpret_cast<const float4 *>(in  + row * N);
+  float4       *row_out = reinterpret_cast<float4       *>(out + row * N);
+
+  // Pass 1: accumulate (max, sum) — no buf[], O(1) register footprint
+  float local_max = -INFINITY, local_sum = 0.0f;
+#pragma unroll
+  for (int i = 0; i < NP; i++) {
+    float4 v = row_in[tid + i * BS];
+    float vs[4] = {v.x, v.y, v.z, v.w};
+#pragma unroll
+    for (int j = 0; j < 4; j++) {
+      float new_max = fmaxf(local_max, vs[j]);
+      local_sum = local_sum * __expf(local_max - new_max) + __expf(vs[j] - new_max);
+      local_max = new_max;
+    }
+  }
+
+  blockReduceOnline<BS>(local_max, local_sum, smem_max, smem_sum);
+  const float row_max = local_max;
+  const float invSum  = __frcp_rn(local_sum);
+
+  // Pass 2: reload via __ldg (read-only cache) → exp-normalize → write
+#pragma unroll
+  for (int i = 0; i < NP; i++) {
+    float4 v = __ldg(row_in + tid + i * BS);
+    v.x = __expf(v.x - row_max) * invSum;
+    v.y = __expf(v.y - row_max) * invSum;
+    v.z = __expf(v.z - row_max) * invSum;
+    v.w = __expf(v.w - row_max) * invSum;
+    row_out[tid + i * BS] = v;
+  }
+}
+
 // Supported sizes defined by ONLINE_SIZES in utils.h.
 // NP = N / (BS * 4) — computed by the macro so the kernel template is correct.
+// Routes to 2-pass for NP >= ONLINE_2PASS_MIN_NP to avoid register spilling.
 void launch_softmax_online(const float *d_in, float *d_out, int M, int N) {
 #define LAUNCH_CASE(n_, bs_)                                                   \
   case n_: {                                                                   \
-    constexpr int np_ = (n_) / ((bs_) * 4);                                    \
-    const size_t smem_ = 2 * ((bs_) / WARP_SIZE) * sizeof(float);              \
-    softmax_online_kernel<np_, bs_><<<M, bs_, smem_>>>(d_in, d_out, M);        \
+    constexpr int np_   = (n_) / ((bs_) * 4);                                  \
+    const size_t  smem_ = 2 * ((bs_) / WARP_SIZE) * sizeof(float);             \
+    if constexpr (np_ >= ONLINE_2PASS_MIN_NP)                                  \
+      softmax_online_2pass_kernel<np_, bs_><<<M, bs_, smem_>>>(d_in, d_out, M); \
+    else                                                                       \
+      softmax_online_kernel<np_, bs_><<<M, bs_, smem_>>>(d_in, d_out, M);      \
     break;                                                                     \
   }
   switch (N) {
