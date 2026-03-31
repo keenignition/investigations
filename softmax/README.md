@@ -1,5 +1,10 @@
 # Softmax
 
+the write up for these is at :
+- https://www.dhrv.org/blog/04/softmax-1/
+- https://www.dhrv.org/blog/04/softmax-2/
+
+
 ## Running the Benchmark
 
 ### Default run (auto-detect arch)
