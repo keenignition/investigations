@@ -9,6 +9,7 @@ dependencies = [
     "ninja>=1.13.0",
     "numpy>=2.4.3",
     "pandas>=3.0.1",
+    "pyyaml>=6.0",
     "torch>=2.10.0",
     "triton>=3.6.0",
 ]
@@ -19,5 +20,5 @@ include = []
 
 [build-system]
 # ninja: PyTorch BuildExtension uses it by default; without it on PATH it falls back to slow distutils.
-requires = ["setuptools", "wheel", "ninja>=1.13.0", "numpy>=2.4.3", "torch>=2.10.0"]
+requires = ["setuptools", "wheel", "ninja>=1.13.0", "numpy>=2.4.3", "torch>=2.10.0", "pyyaml"]
 build-backend = "setuptools.build_meta"

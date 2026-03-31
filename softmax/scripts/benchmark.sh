@@ -26,10 +26,31 @@ export CUDA_HOME="/usr/local/cuda-12.8"
 export PATH="$CUDA_HOME/bin:$PATH"
 export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
 
-# --- venv and benchmark ---
-export CUDA_ARCH="${CUDA_ARCH:-sm_75}"
+# --- venv ---
 uv sync
 source .venv/bin/activate
+
+# --- arch detection (CUDA_ARCH env var wins; otherwise query nvidia-smi) ---
+if [ -z "${CUDA_ARCH:-}" ]; then
+  CUDA_ARCH="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
+    | head -1 | tr -d ' ' | sed 's/\.//')"
+  CUDA_ARCH="sm_${CUDA_ARCH}"
+fi
+export CUDA_ARCH
+echo "[benchmark.sh] arch=${CUDA_ARCH}"
+
+# --- generate kernel_config.h for this arch, then build ---
+python scripts/gen_kernel_config.py "${CUDA_ARCH}"
 # Avoid PEP 517 isolation reinstalling PyTorch (huge); use venv's torch for the extension build
 uv pip install -e . --no-build-isolation
+
+# --- (optional) autotune: set AUTOTUNE=1 to run before benchmarking ---
+if [ "${AUTOTUNE:-0}" = "1" ]; then
+  echo "[benchmark.sh] running autotune (AUTOTUNE=1)"
+  python scripts/autotune.py --arch "${CUDA_ARCH}" ${AUTOTUNE_ARGS:-}
+  # Rebuild with the tuned config
+  python scripts/gen_kernel_config.py "${CUDA_ARCH}"
+  uv pip install -e . --no-build-isolation
+fi
+
 python benchmark.py

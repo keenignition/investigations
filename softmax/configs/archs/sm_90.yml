@@ -1,0 +1,55 @@
+# sm_90 — NVIDIA Hopper (H100)
+# Register file: 65536 × 32-bit per SM
+# Max SMEM per block: 228 KB (configurable)
+# HBM3 bandwidth: ~3.35 TB/s (80 GB)
+# Thread block clusters and TMA available for future kernels.
+# Register arithmetic is the same as Ampere for current kernels.
+arch: sm_90
+display_name: "NVIDIA Hopper (H100)"
+
+compile:
+  maxrregcount: 128
+
+kernels:
+  fused_warp:
+    threadblock_size: 128
+    supported_n: [1024, 2048, 4096]
+
+  fused_block:
+    block_size: 1024
+    supported_n: [4096, 8192, 16384, 32768, 65536]
+
+  online:
+    sizes:
+      - [1024,   256]
+      - [2048,   256]
+      - [4096,  1024]
+      - [8192,  1024]
+      - [16384, 1024]
+      - [32768, 1024]
+      - [65536, 1024]
+      - [131072, 1024]
+      - [262144, 1024]
+    two_pass_min_np: 16
+
+  online_v2:
+    single_block:
+      max_n: 65536
+      sizes:
+        - [1024,   256]
+        - [2048,   256]
+        - [4096,  1024]
+        - [8192,  1024]
+        - [16384, 1024]
+        - [32768, 1024]
+        - [65536, 1024]
+    multi_block:
+      target_np: 8
+      block_size: 1024
+      split_threshold: 16
+
+benchmark:
+  batch_size: 2048
+  warmup: 3
+  runs: 5
+  x_vals: [1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144]

@@ -21,5 +21,6 @@ run_nsys "fused_triton"          "fused"
 run_nsys "softmax_fused_warp"    "softmax_fused_warp"
 run_nsys "softmax_fused_block"   "softmax_fused_block"
 run_nsys "softmax_online"        "softmax_online"
+run_nsys "softmax_online_v2"     "softmax_online_v2"
 
 echo "Reports written to $ROOT/out/*.nsys-rep"

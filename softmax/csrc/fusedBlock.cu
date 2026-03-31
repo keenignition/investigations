@@ -86,7 +86,7 @@ __global__ __launch_bounds__(FUSED_BLOCK_SIZE) void softmax_fused_block_kernel(
   // sync max reduce across the block
 #pragma unroll
   for (int i = 0; i < NP; i++) {
-    buf[i] = row_in[tid + i * FUSED_BLOCK_SIZE]; // coalesced
+    buf[i] = row_in[tid + i * FUSED_BLOCK_SIZE];
     local_max = fmaxf(
         local_max, fmaxf(fmaxf(buf[i].x, buf[i].y), fmaxf(buf[i].z, buf[i].w)));
   }
@@ -143,11 +143,10 @@ void launch_softmax_fused_block(const float *d_in, float *d_out, int M, int N) {
 int main() {
   const int M = BENCH_DEFAULT_M;
   const int N = 4096; // change to any supported value: 4096..65536 (pow2)
-  float *d_in = nullptr;
-  float *d_out = nullptr;
+  float *h_in = nullptr, *h_out = nullptr;
+  float *d_in = nullptr, *d_out = nullptr;
 
-  bench_alloc(&d_in, &d_out, M, N);
-  bench_init_curand(d_in, M, N);
+  bench_alloc(&h_in, &h_out, &d_in, &d_out, M, N);
 
   for (int i = 0; i < 5; i++) {
     launch_softmax_fused_block(d_in, d_out, M, N);
@@ -160,8 +159,9 @@ int main() {
   launch_softmax_fused_block(d_in, d_out, M, N);
   bench_timing_end(start, stop, &ms);
 
+  bench_copy_back(h_out, d_out, M, N);
   printf("kernel time: %f ms\n", ms);
-  bench_free(d_in, d_out);
+  bench_free(h_in, h_out, d_in, d_out);
   return 0;
 }
 

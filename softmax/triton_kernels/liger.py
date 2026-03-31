@@ -67,8 +67,8 @@ def _softmax_multi_block_forward_kernel(
     row_id = tl.program_id(0)
     offs = tl.arange(0, BLOCK_SIZE)
 
-    m = tl.float32(-float("inf"))
-    d = tl.float32(0.0)
+    m = tl.full([], -float("inf"), dtype=tl.float32)
+    d = tl.full([], 0.0, dtype=tl.float32)
     for start in tl.range(0, n_cols, BLOCK_SIZE):
         idx = start + offs
         mask = idx < n_cols

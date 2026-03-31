@@ -82,28 +82,28 @@ void launch_softmax_naive(const float *in, float *out, int M, int N) {
 int main() {
   int M = BENCH_DEFAULT_M;
   int N = BENCH_DEFAULT_N;
-  floatX *in, *out;
+  floatX *h_in, *h_out, *d_in, *d_out;
 
-  bench_alloc(&in, &out, M, N);
-  bench_init_curand(in, M, N);
+  bench_alloc(&h_in, &h_out, &d_in, &d_out, M, N);
 
   const int threads = BENCH_THREADS;
   const int blocks = M;
   const size_t smem = threads * sizeof(float);
 
   for (int i = 0; i < 5; i++) {
-    softmax_kernel<<<blocks, threads, smem>>>(in, out, M, N);
+    softmax_kernel<<<blocks, threads, smem>>>(d_in, d_out, M, N);
   }
   cudaDeviceSynchronize();
 
   cudaEvent_t start, stop;
   float ms;
   bench_timing_begin(&start, &stop);
-  softmax_kernel<<<blocks, threads, smem>>>(in, out, M, N);
+  softmax_kernel<<<blocks, threads, smem>>>(d_in, d_out, M, N);
   bench_timing_end(start, stop, &ms);
 
+  bench_copy_back(h_out, d_out, M, N);
   printf("kernel time: %f ms\n", ms);
-  bench_free(in, out);
+  bench_free(h_in, h_out, d_in, d_out);
   return 0;
 }
 

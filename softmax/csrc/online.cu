@@ -1,5 +1,8 @@
 #include "utils.h"
+#include <cooperative_groups.h>
 #include <math.h>
+
+namespace cg = cooperative_groups;
 
 // Implementation from
 // https://arxiv.org/abs/1805.02867
@@ -16,10 +19,14 @@ __device__ __forceinline__ void onlineMerge(float &m1, float &s1, float m2,
 // Warp-level online reduction via butterfly shuffle
 __device__ __forceinline__ void warpReduceOnline(float &max_val,
                                                  float &sum_val) {
+  // CG: named warp tile — communicates intent and manages the active mask
+  auto warp = cg::tiled_partition<32>(cg::this_thread_block());
 #pragma unroll
   for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
-    float other_max = __shfl_xor_sync(0xffffffff, max_val, mask);
-    float other_sum = __shfl_xor_sync(0xffffffff, sum_val, mask);
+    // float other_max = __shfl_xor_sync(0xffffffff, max_val, mask);
+    // float other_sum = __shfl_xor_sync(0xffffffff, sum_val, mask);
+    float other_max = warp.shfl_xor(max_val, mask);
+    float other_sum = warp.shfl_xor(sum_val, mask);
     onlineMerge(max_val, sum_val, other_max, other_sum);
   }
 }
@@ -32,12 +39,15 @@ blockReduceOnline(float &max_val, float &sum_val, float *scratch_max,
   const int lane = threadIdx.x & (WARP_SIZE - 1);
   const int wid = threadIdx.x / WARP_SIZE;
 
+  auto block = cg::this_thread_block();
+
   warpReduceOnline(max_val, sum_val); // intra-warp, register-only
   if (lane == 0) {
     scratch_max[wid] = max_val; // n_warps writes
     scratch_sum[wid] = sum_val;
   }
-  __syncthreads();
+  // __syncthreads();
+  block.sync();
 
   if (threadIdx.x < n_warps) {
     max_val = scratch_max[threadIdx.x];
@@ -52,7 +62,8 @@ blockReduceOnline(float &max_val, float &sum_val, float *scratch_max,
     scratch_max[0] = max_val;
     scratch_sum[0] = sum_val;
   }
-  __syncthreads();
+  // __syncthreads();
+  block.sync();
   max_val = scratch_max[0];
   sum_val = scratch_sum[0];
 }
@@ -111,8 +122,6 @@ __global__ __launch_bounds__(BS) void softmax_online_kernel(
   }
 }
 
-#define ONLINE_2PASS_MIN_NP 16 
-
 template <int NP, int BS>
 __global__ __launch_bounds__(BS) void softmax_online_2pass_kernel(
     const float *__restrict__ in, float *__restrict__ out, int M) {
@@ -160,7 +169,7 @@ __global__ __launch_bounds__(BS) void softmax_online_2pass_kernel(
   }
 }
 
-// NP = N / (BS * 4) — computed by the macro so the kernel template is correct.
+// NP = N / (BS * 4) computed by the macro so the kernel template is correct.
 // Routes to 2-pass for NP >= ONLINE_2PASS_MIN_NP to avoid register spilling.
 void launch_softmax_online(const float *d_in, float *d_out, int M, int N) {
 #define LAUNCH_CASE(n_, bs_)                                                   \
@@ -188,11 +197,10 @@ void launch_softmax_online(const float *d_in, float *d_out, int M, int N) {
 int main() {
   const int M = BENCH_DEFAULT_M;
   const int N = 4096; // change to any supported value: 4096..65536 (pow2)
-  float *d_in = nullptr;
-  float *d_out = nullptr;
+  float *h_in = nullptr, *h_out = nullptr;
+  float *d_in = nullptr, *d_out = nullptr;
 
-  bench_alloc(&d_in, &d_out, M, N);
-  bench_init_curand(d_in, M, N);
+  bench_alloc(&h_in, &h_out, &d_in, &d_out, M, N);
 
   for (int i = 0; i < 5; i++) {
     launch_softmax_online(d_in, d_out, M, N);
@@ -205,8 +213,9 @@ int main() {
   launch_softmax_online(d_in, d_out, M, N);
   bench_timing_end(start, stop, &ms);
 
+  bench_copy_back(h_out, d_out, M, N);
   printf("kernel time: %f ms\n", ms);
-  bench_free(d_in, d_out);
+  bench_free(h_in, h_out, d_in, d_out);
   return 0;
 }
 

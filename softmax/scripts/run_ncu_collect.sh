@@ -6,7 +6,7 @@ cd "$ROOT"
 mkdir -p out
 
 # Default N for profiling (use 4096 so fused uses register kernel; 8192 would use block kernel)
-N="${1:-131072}"
+N="${1:-8192}"
 
 run_ncu() {
   local name="$1"
@@ -21,5 +21,6 @@ run_ncu "fused_triton"          "fused"
 run_ncu "softmax_fused_warp"    "softmax_fused_warp"
 run_ncu "softmax_fused_block"   "softmax_fused_block"
 run_ncu "softmax_online"        "softmax_online"
+run_ncu "softmax_online_v2"     "softmax_online_v2"
 
 echo "Reports written to $ROOT/out/*.ncu-rep"

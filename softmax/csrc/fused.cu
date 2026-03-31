@@ -7,11 +7,9 @@
 // For N > 4096 we exceed that and the compiler spills to local memory ->
 // catastrophic slowdown. use a different kernel for N > 4096.
 
-// (32,4) block = 128 threads; tell the compiler so it can tune register usage
-constexpr int THREADBLOCK_SIZE = 128;
-
 template <int N>
-__global__ __launch_bounds__(THREADBLOCK_SIZE) void softmax_fused_warp_kernel(
+__global__
+__launch_bounds__(FUSED_WARP_THREADBLOCK_SIZE) void softmax_fused_warp_kernel(
     const float *__restrict__ in, float *__restrict__ out, int M) {
 
   constexpr int NP = N / 128;
@@ -79,7 +77,7 @@ __global__ __launch_bounds__(THREADBLOCK_SIZE) void softmax_fused_warp_kernel(
 
 // N must be a multiple of 128; supported sizes defined by FUSED_WARP_SIZES.
 void launch_softmax_fused_warp(const float *d_in, float *d_out, int M, int N) {
-  constexpr int WARPS_PER_BLOCK = THREADBLOCK_SIZE / WARP_SIZE; // 4
+  constexpr int WARPS_PER_BLOCK = FUSED_WARP_THREADBLOCK_SIZE / WARP_SIZE; // 4
   dim3 blockSize(WARP_SIZE, WARPS_PER_BLOCK);
   dim3 gridSize((M + WARPS_PER_BLOCK - 1) / WARPS_PER_BLOCK);
 #define LAUNCH_CASE(n_)                                                        \
@@ -100,12 +98,12 @@ void launch_softmax_fused_warp(const float *d_in, float *d_out, int M, int N) {
 
 int main() {
   const int M = BENCH_DEFAULT_M;
-  const int N = 1024;
-  float *d_in = nullptr;
-  float *d_out = nullptr;
+  // const int N = 1024;
+  const int N = 2048;
+  float *h_in = nullptr, *h_out = nullptr;
+  float *d_in = nullptr, *d_out = nullptr;
 
-  bench_alloc(&d_in, &d_out, M, N);
-  bench_init_curand(d_in, M, N);
+  bench_alloc(&h_in, &h_out, &d_in, &d_out, M, N);
 
   for (int i = 0; i < 5; i++) {
     launch_softmax_fused_warp(d_in, d_out, M, N);
@@ -118,8 +116,9 @@ int main() {
   launch_softmax_fused_warp(d_in, d_out, M, N);
   bench_timing_end(start, stop, &ms);
 
+  bench_copy_back(h_out, d_out, M, N);
   printf("kernel time: %f ms\n", ms);
-  bench_free(d_in, d_out);
+  bench_free(h_in, h_out, d_in, d_out);
   return 0;
 }
 

@@ -5,14 +5,39 @@ import matplotlib.pyplot as plt
 import softmax_kernel
 import triton
 
+from arch_config import load_config
 from triton_kernels.fused import fused_softmax
 from triton_kernels.liger import liger_softmax
 from triton_kernels.online import online_softmax
 
+_arch_cfg = load_config()
+_bench = _arch_cfg["benchmark"]
+_X_VALS: list[int] = _bench["x_vals"]
+
+
+def _safe_batch_size(max_n: int, config_bs: int) -> int:
+    try:
+        free, _ = torch.cuda.mem_get_info()
+        # input + output = 2 tensors of (batch_size × max_n × 4 bytes)
+        bs = int(free * 0.4) // (max_n * 4 * 2)
+        bs = max(1, min(bs, config_bs))
+        if bs < config_bs:
+            free_mb = free / 1024**2
+            print(
+                f"[benchmark] GPU has {free_mb:.0f} MiB free — "
+                f"capping batch_size {config_bs} → {bs} to avoid OOM"
+            )
+        return bs
+    except Exception:
+        return config_bs
+
+
+_BATCH_SIZE: int = _safe_batch_size(max(_X_VALS), _bench["batch_size"])
+
 configs = [
     triton.testing.Benchmark(
         x_names=["N"],
-        x_vals=[2**i for i in range(10, 17)],  # 1024..262144
+        x_vals=_X_VALS,
         line_arg="provider",
         line_vals=[
             "torch",
@@ -24,6 +49,7 @@ configs = [
             "softmax_fused_warp",
             "softmax_fused_block",
             "softmax_online",
+            "softmax_online_v2",
         ],
         line_names=[
             "Torch",
@@ -35,6 +61,7 @@ configs = [
             "Softmax Fused Warp (CUDA)",
             "Softmax Fused Block (CUDA)",
             "Softmax Online (CUDA)",
+            "Softmax Online V2 (CUDA, multi-block)",
         ],
         ylabel="TFLOPS",
         plot_name="softmax-performance",
@@ -51,7 +78,7 @@ def _gbps(x: torch.Tensor, *times_ms: float) -> tuple[float, ...]:
 
 @triton.testing.perf_report(configs)
 def benchmark(N: int, provider: str, quantiles: list[float] = [0.5, 0.2, 0.8]):
-    x = torch.randn((2048, N), device="cuda")
+    x = torch.randn((_BATCH_SIZE, N), device="cuda")
 
     def run_provider() -> Callable:
         if provider == "torch":
@@ -72,6 +99,8 @@ def benchmark(N: int, provider: str, quantiles: list[float] = [0.5, 0.2, 0.8]):
             return lambda: softmax_kernel.softmax_fused_block(x)
         elif provider == "softmax_online":
             return lambda: softmax_kernel.softmax_online(x)
+        elif provider == "softmax_online_v2":
+            return lambda: softmax_kernel.softmax_online_v2(x)
         else:
             raise KeyError(f"Unknown provider {provider!r}.")
 
@@ -80,8 +109,8 @@ def benchmark(N: int, provider: str, quantiles: list[float] = [0.5, 0.2, 0.8]):
             run_provider(), quantiles=quantiles
         )
         return _gbps(x, ms, max_ms, min_ms)
-    except RuntimeError as e:
-        if "not supported" in str(e) or "N must be" in str(e):
+    except (RuntimeError, torch.OutOfMemoryError) as e:
+        if any(s in str(e) for s in ("not supported", "N must be", "out of memory")):
             return 0.0, 0.0, 0.0
         raise
 

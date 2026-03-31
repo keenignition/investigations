@@ -1,46 +1,90 @@
 # Softmax
 
-This project needs CUDA/nvcc 12.8.
+## Running the Benchmark
 
-## Setup
-
-1. Copy `.env.example` to `.env` and set `CUDA_ARCH` for your GPU (e.g. `sm_89`).
-2. Run the benchmark script (creates `.venv`, `uv sync`, then fast editable install + `benchmark.py`):
-
-   ```bash
-   source .env   # or: export $(grep -v '^#' .env | xargs)
-   ./scripts/benchmark.sh
-   ```
-
-   The script uses `uv pip install -e . --no-build-isolation` so the CUDA extension builds against the venv’s PyTorch instead of a fresh isolated multi‑GB torch install.
-
-**Manual install** (if not using `benchmark.sh`):
-
-   ```bash
-   uv sync
-   source .venv/bin/activate
-   uv pip install -e . --no-build-isolation
-   ```
-
-### Why `pip install -e .` can take ~10 minutes (especially on a remote box)
-
-`pip` uses **PEP 517 build isolation** by default. Your `[build-system] requires` includes **`torch`**, so each install may create a **fresh build environment** and **download/extract a full PyTorch wheel** (gigabytes) *before* nvcc touches your tiny `.cu` files. Kernel size does not matter much; that step dominates.
-
-**Fast iterative workflow** (use the venv’s torch instead of reinstalling it for every build): same as `./scripts/benchmark.sh` after `uv sync`, or:
+### Default run (auto-detect arch)
 
 ```bash
-uv sync   # once: pulls torch + ninja into .venv
-uv pip install -e . --no-build-isolation
-# or:  pip install -e . --no-build-isolation
+./scripts/benchmark.sh
 ```
 
-To see where time goes: `pip install -e . -v` (watch for “Installing build dependencies” / torch).
+### Specify arch explicitly
 
-**Optional compile speedups** (after the isolation issue is fixed):
+Set `CUDA_ARCH` to override auto-detection. Supported archs: `sm_75`, `sm_80`, `sm_86`, `sm_89`, `sm_90`.
 
-- **Parallel nvcc**: Ninja is used by default if `ninja` is on `PATH`; cap jobs with `export MAX_JOBS=8`.
-- **ccache**: `export CCACHE_DIR=~/.ccache` and wrap `nvcc` / `c++` with ccache for faster rebuilds.
-- **Profiling-oriented flags**: `setup.py` passes `-Xptxas=-v` and `-lineinfo`; fine for analysis, slightly more work than a minimal dev build—only matters once PyTorch isn’t being reinstalled every time.
+```bash
+CUDA_ARCH=sm_89 ./scripts/benchmark.sh
+```
+
+Or persist it in your shell / `.env`:
+
+```bash
+export CUDA_ARCH=sm_89
+./scripts/benchmark.sh
+```
+
+### Run with autotune
+
+Set `AUTOTUNE=1` to run coordinate-descent tuning before benchmarking. The tuner tries candidate values for register count and per-kernel launch parameters, rebuilds the extension for each candidate, and writes the best config back to `configs/archs/<arch>.yml` before the final benchmark run.
+
+```bash
+AUTOTUNE=1 ./scripts/benchmark.sh
+```
+
+With an explicit arch:
+
+```bash
+CUDA_ARCH=sm_89 AUTOTUNE=1 ./scripts/benchmark.sh
+```
+
+Pass extra flags to the tuner via `AUTOTUNE_ARGS`:
+
+```bash
+# Tune only the online_v2 kernel, limit to 2 coordinate-descent rounds
+AUTOTUNE=1 AUTOTUNE_ARGS="--kernel online_v2 --rounds 2" ./scripts/benchmark.sh
+```
+
+#### Run autotune standalone
+
+```bash
+# Auto-detect arch, tune all kernels
+python scripts/autotune.py
+
+# Explicit arch
+python scripts/autotune.py --arch sm_89
+
+# Single kernel (fused_warp | fused_block | online | online_v2)
+python scripts/autotune.py --arch sm_89 --kernel online_v2
+
+# Dry-run: print what would be tried without rebuilding
+python scripts/autotune.py --arch sm_89 --dry-run
+
+# Limit coordinate-descent rounds
+python scripts/autotune.py --arch sm_89 --rounds 2
+```
+
+Tunable parameters and their search spaces:
+
+| Parameter | Candidates |
+|---|---|
+| `compile.maxrregcount` | 64, 96, 128 |
+| `kernels.online.two_pass_min_np` | 8, 16, 32 |
+| `kernels.online_v2.multi_block.target_np` | 4, 8, 16 |
+| `kernels.online_v2.multi_block.split_threshold` | 8, 16, 32 |
+
+After autotuning, the winning config is saved to `configs/archs/<arch>.yml`. 
+
+### Add a new arch config
+
+If your GPU arch isn’t in `configs/archs/` (e.g. `sm_87`), copy the closest existing config and edit it:
+
+```bash
+cp configs/archs/sm_86.yml configs/archs/sm_87.yml
+# edit configs/archs/sm_87.yml as needed
+python scripts/gen_kernel_config.py sm_87
+uv pip install -e . --no-build-isolation
+python benchmark.py
+```
 
 ---
 
@@ -55,9 +99,7 @@ Profiles all softmax variants with NVIDIA Nsight Compute and writes `.ncu-rep` r
 ```bash
 ./run_ncu_collect.sh [N]
 ```
-
 - `N` — problem size for profiling (default: 4096; use 8192 to force block kernel for fused).
-- Output: `out/softmax_naive.ncu-rep`, `out/softmax_wr.ncu-rep`, `out/softmax_fused.ncu-rep`, `out/softmax_block.ncu-rep`, `out/fused_triton.ncu-rep`.
 
 ### `ncu_export_txt.sh`
 
@@ -93,23 +135,6 @@ python ncu_compare.py -o path/to/compare.csv [directory]
 - `-o path` — output CSV path (default: `<directory>/ncu_compare.csv`).
 
 The script uses the first non–PyTorch kernel in each report. The CSV contains: a metric table with one column per report and a `best` column; a duration ranking section; and a suggestions section. A single line (e.g. `Wrote out/ncu_compare.csv`) is printed to stderr.
-
-### `ncu_dump_sass.sh`
-
-Dumps SASS and PTX for a kernel from an NCU report to text files (for grepping, diffing, or scripting).
-
-**Usage:**
-
-```bash
-./ncu_dump_sass.sh <report.ncu-rep> [kernel_regex] [output_dir]
-```
-
-- `report.ncu-rep` — path to the report.
-- `kernel_regex` — optional; `-k` filter for kernel name (e.g. `"softmax_kernel"`). If omitted, all kernels are dumped.
-- `output_dir` — optional (default: `out/ncu_dumps`).
-
-Output: `<output_dir>/<report_stem>_<kernel_slug>.sass` and `.ptx`. Example:  
-`./ncu_dump_sass.sh out/softmax_naive.ncu-rep "softmax_kernel" out/dumps`
 
 ---
 

@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 from setuptools import setup
@@ -15,7 +16,28 @@ if _env_file.exists():
             k, _, v = line.partition("=")
             os.environ.setdefault(k.strip(), v.strip())
 
-CUDA_ARCH = os.environ.get("CUDA_ARCH", "sm_75")
+_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(_ROOT))
+
+from arch_config import detect_arch, load_config as load_arch_config  # noqa: E402
+
+
+def generate_kernel_config(cfg: dict) -> None:
+    # Import here so the path manipulation in gen_kernel_config isn't needed
+    sys.path.insert(0, str(_ROOT / "scripts"))
+    from gen_kernel_config import generate_header  # noqa: PLC0415
+    header = generate_header(cfg)
+    out_path = _ROOT / "csrc" / "kernel_config.h"
+    out_path.write_text(header)
+    print(f"[setup] wrote {out_path.relative_to(_ROOT)}")
+
+
+CUDA_ARCH = os.environ.get("CUDA_ARCH") or detect_arch()
+print(f"[setup] building for arch={CUDA_ARCH}")
+
+_cfg = load_arch_config(CUDA_ARCH)
+generate_kernel_config(_cfg)
+_maxrregcount = _cfg["compile"]["maxrregcount"]
 
 ext_modules = [
     CUDAExtension(
@@ -28,6 +50,7 @@ ext_modules = [
             "csrc/fused.cu",
             "csrc/fusedBlock.cu",
             "csrc/online.cu",
+            "csrc/online_v2.cu",
         ],
         extra_compile_args={
             "cxx": [
@@ -44,7 +67,7 @@ ext_modules = [
                 "-lineinfo",
                 "-Xptxas=-v",
                 "-lcurand",
-                "-maxrregcount=128",
+                f"-maxrregcount={_maxrregcount}",
                 f"-arch={CUDA_ARCH}",
             ],
         },

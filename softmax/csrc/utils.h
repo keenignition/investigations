@@ -4,56 +4,24 @@
 #include <cuda_runtime.h>
 #include <stdio.h>
 
+// All architecture-specific constants (block sizes, N ranges, X-macros, V2
+// tuning knobs) live in kernel_config.h, which is auto-generated from the
+// per-arch YAML in configs/archs/<sm_XX>.yml.
+// Re-generate: python scripts/gen_kernel_config.py
+#include "kernel_config.h"
+
 typedef float floatX;
 
 #define WARP_SIZE 32
-#define FUSED_BLOCK_SIZE 1024 // threads per block for block/online kernels
 
 // ---------------------------------------------------------------------------
-// Supported N ranges
-// ---------------------------------------------------------------------------
-#define FUSED_WARP_MIN_N 1024
-#define FUSED_WARP_MAX_N 4096
-#define FUSED_BLOCK_MIN_N 4096
-#define FUSED_BLOCK_MAX_N 65536
-#define ONLINE_MIN_N 1024
-#define ONLINE_MAX_N 262144
-
-// ---------------------------------------------------------------------------
-// X-macros: expand F once per supported N.  Add a new row here to support a
-// new size — the launcher switch case expands automatically.
+// X-macros overview (defined in kernel_config.h):
 //
-// FUSED_WARP_SIZES(F)  — F(N)       kernel: softmax_fused_warp_kernel<N>
-// FUSED_BLOCK_SIZES(F) — F(N)       kernel: softmax_fused_block_kernel<N>
-// ONLINE_SIZES(F)      — F(N, BS)   kernel: softmax_online_kernel<NP, BS>
-//                         BS varies so small N fits without spilling registers
+//   FUSED_WARP_SIZES(F)       — F(N)       softmax_fused_warp_kernel<N>
+//   FUSED_BLOCK_SIZES(F)      — F(N)       softmax_fused_block_kernel<N>
+//   ONLINE_SIZES(F)           — F(N, BS)   softmax_online_kernel<NP, BS>
+//   ONLINE_V2_SINGLE_SIZES(F) — F(N, BS)   softmax_v2_single_kernel<NP, BS>
 // ---------------------------------------------------------------------------
-#define FUSED_WARP_SIZES(F)                                                    \
-  F(1024)                                                                      \
-  F(2048)                                                                      \
-  F(4096)
-
-#define FUSED_BLOCK_SIZES(F)                                                   \
-  F(4096)                                                                      \
-  F(8192)                                                                      \
-  F(16384)                                                                     \
-  F(32768)                                                                     \
-  F(65536)
-
-// online: BS=256 for N<4096 so NP≥1 without using 1024 threads on a tiny row.
-// N=131072 → NP=32 (128 regs for buf alone, likely spills under
-// -maxrregcount=128). N=262144 → NP=64 (256 regs for buf, heavy spill —
-// included to show the wall).
-#define ONLINE_SIZES(F)                                                        \
-  F(1024, 256)                                                                 \
-  F(2048, 256)                                                                 \
-  F(4096, 1024)                                                                \
-  F(8192, 1024)                                                                \
-  F(16384, 1024)                                                               \
-  F(32768, 1024)                                                               \
-  F(65536, 1024)                                                               \
-  F(131072, 1024)                                                              \
-  F(262144, 1024)
 
 #define CUDA_CHECK(err)                                                        \
   do {                                                                         \
@@ -69,27 +37,52 @@ void launch_softmax_wr(const float *in, float *out, int M, int N);
 void launch_softmax_fused_warp(const float *in, float *out, int M, int N);
 void launch_softmax_fused_block(const float *in, float *out, int M, int N);
 void launch_softmax_online(const float *in, float *out, int M, int N);
+void launch_softmax_online_v2(const float *in, float *out, int M, int N);
 #endif
 
 #ifdef SOFTMAX_STANDALONE
 
 #include <curand.h>
+#include <stdlib.h>
 
 #define BENCH_DEFAULT_M 4096
 #define BENCH_DEFAULT_N 4096
-#define BENCH_THREADS 256
+#define BENCH_THREADS 1024
 
-static inline void bench_alloc(floatX **in, floatX **out, int M, int N) {
-  CUDA_CHECK(cudaMalloc(in, (size_t)M * N * sizeof(floatX)));
-  CUDA_CHECK(cudaMalloc(out, (size_t)M * N * sizeof(floatX)));
+// Full CPU→GPU lifecycle:
+//   1. malloc host buffers
+//   2. fill h_in with deterministic random data on CPU
+//   3. cudaMalloc device buffers
+//   4. cudaMemcpy h_in → d_in  (H2D)
+static inline void bench_alloc(floatX **h_in, floatX **h_out, floatX **d_in,
+                               floatX **d_out, int M, int N) {
+  size_t bytes = (size_t)M * N * sizeof(floatX);
+
+  *h_in = (floatX *)malloc(bytes);
+  *h_out = (floatX *)calloc((size_t)M * N, sizeof(floatX));
+
+  srand(42);
+  for (int i = 0; i < M * N; i++)
+    (*h_in)[i] = (floatX)rand() / RAND_MAX * 2.0f - 1.0f; // uniform [-1, 1]
+
+  CUDA_CHECK(cudaMalloc(d_in, bytes));
+  CUDA_CHECK(cudaMalloc(d_out, bytes));
+  CUDA_CHECK(cudaMemcpy(*d_in, *h_in, bytes, cudaMemcpyHostToDevice));
 }
 
-static inline void bench_init_curand(floatX *in, int M, int N) {
+// D2H copy — call after kernel to bring results back for verification
+static inline void bench_copy_back(floatX *h_out, floatX *d_out, int M, int N) {
+  CUDA_CHECK(cudaMemcpy(h_out, d_out, (size_t)M * N * sizeof(floatX),
+                        cudaMemcpyDeviceToHost));
+}
+
+// GPU-only init via cuRAND (alternative to bench_alloc's CPU fill + H2D)
+static inline void bench_init_curand(floatX *d_in, int M, int N) {
 #ifdef __CUDACC__
   curandGenerator_t gen;
   curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
   curandSetPseudoRandomGeneratorSeed(gen, 69);
-  curandGenerateUniform(gen, in, (size_t)M * N);
+  curandGenerateUniform(gen, d_in, (size_t)M * N);
   curandDestroyGenerator(gen);
 #endif
 }
@@ -109,9 +102,12 @@ static inline void bench_timing_end(cudaEvent_t start, cudaEvent_t stop,
   cudaEventDestroy(stop);
 }
 
-static inline void bench_free(floatX *in, floatX *out) {
-  cudaFree(in);
-  cudaFree(out);
+static inline void bench_free(floatX *h_in, floatX *h_out, floatX *d_in,
+                              floatX *d_out) {
+  free(h_in);
+  free(h_out);
+  cudaFree(d_in);
+  cudaFree(d_out);
 }
 
 #endif /* SOFTMAX_STANDALONE */
